@@ -3,15 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Command Flow - Secure 2-Way Video Call HUD</title>
+  <title>Command Flow - P2P WebRTC</title>
   <script src="https://cdn.tailwindcss.com"></script>
   <script src="https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js"></script>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@600;800;900&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <style>
-    :root {
-      --neon-green: #39ff14; --neon-cyan: #00fff9; --neon-pink: #ff2ee6; --neon-amber: #ffb800; --hud-bg: #04070a;
-    }
+    :root { --neon-green: #39ff14; --neon-cyan: #00fff9; --neon-pink: #ff2ee6; --neon-amber: #ffb800; --hud-bg: #04070a; }
     * { box-sizing: border-box; }
     body { font-family: 'Inter', sans-serif; background: #0b0f19; color: #e5e7eb; min-height: 100vh; margin: 0; }
     .font-mono-hud { font-family: 'Share Tech Mono', monospace; }
@@ -20,24 +18,21 @@
     .view.active { display: block; }
     .glass-card { background: rgba(255,255,255,0.03); border: 1px solid rgba(255,255,255,0.08); backdrop-filter: blur(10px); }
     .btn-primary { background: linear-gradient(135deg, #6366f1, #8b5cf6); transition: all 0.2s ease; }
-    .btn-primary:hover { transform: translateY(-2px); box-shadow: 0 10px 25px -5px rgba(99,102,241,0.5); }
     .btn-secondary { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.12); }
     
     .hud-container {
       background: radial-gradient(ellipse at top, rgba(0,255,249,0.08), transparent 60%), var(--hud-bg);
       border: 1px solid rgba(57,255,20,0.35); position: relative; overflow: hidden;
     }
-    .hud-corner { position: absolute; width: 20px; height: 20px; border-color: var(--neon-green); z-index: 20; }
+    .hud-corner { position: absolute; width: 18px; height: 18px; border-color: var(--neon-green); z-index: 20; }
     .hud-corner.tl { top: 8px; left: 8px; border-top: 3px solid; border-left: 3px solid; }
     .hud-corner.tr { top: 8px; right: 8px; border-top: 3px solid; border-right: 3px solid; }
     .hud-corner.bl { bottom: 8px; left: 8px; border-bottom: 3px solid; border-left: 3px solid; }
     .hud-corner.br { bottom: 8px; right: 8px; border-bottom: 3px solid; border-right: 3px solid; }
     
-    .glow-g { color: var(--neon-green); text-shadow: 0 0 10px rgba(57,255,20,0.8); }
-    .glow-c { color: var(--neon-cyan); text-shadow: 0 0 10px rgba(0,255,249,0.8); }
-    .glow-a { color: var(--neon-amber); text-shadow: 0 0 10px rgba(255,184,0,0.8); }
-    .pulse-ring { animation: pulse 1.6s infinite; }
-    @keyframes pulse { 0% { box-shadow: 0 0 0 0 rgba(57,255,20,0.6); } 70% { box-shadow: 0 0 0 14px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+    .glow-g { color: var(--neon-green); text-shadow: 0 0 8px rgba(57,255,20,0.8); }
+    .glow-c { color: var(--neon-cyan); text-shadow: 0 0 8px rgba(0,255,249,0.8); }
+    .glow-a { color: var(--neon-amber); text-shadow: 0 0 8px rgba(255,184,0,0.8); }
     
     .toast { position: fixed; top: 20px; left: 50%; transform: translateX(-50%) translateY(-20px); opacity: 0; transition: all 0.3s; z-index: 100; pointer-events: none; }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
@@ -45,9 +40,8 @@
 </head>
 <body>
 
-  <!-- TOAST -->
   <div id="toast" class="toast">
-    <div class="glass-card rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 border-l-4 border-green-500 bg-[#0f172a]" id="toast-inner">
+    <div class="glass-card rounded-xl px-5 py-3 shadow-2xl flex items-center gap-3 border-l-4 border-green-500 bg-[#0f172a]">
       <span id="toast-message" class="text-sm font-medium"></span>
     </div>
   </div>
@@ -60,7 +54,7 @@
         <h1 class="font-display text-3xl font-black bg-gradient-to-r from-indigo-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
           COMMAND FLOW
         </h1>
-        <p class="text-gray-400 mt-2 text-xs font-mono-hud">🔒 Encrypted WebRTC Video Call &amp; HUD</p>
+        <p class="text-gray-400 mt-2 text-xs font-mono-hud">🔒 P2P Video Call &amp; Real-Time HUD</p>
       </div>
 
       <div class="glass-card rounded-2xl p-6 space-y-4">
@@ -73,7 +67,7 @@
         </div>
 
         <div class="space-y-3">
-          <input id="input-passcode" type="text" maxlength="6" placeholder="Nhập Passcode 6 ký tự..."
+          <input id="input-passcode" type="text" maxlength="6" placeholder="Nhập Passcode..."
             class="w-full bg-black/40 border border-gray-700 rounded-xl px-4 py-3 text-center text-lg tracking-widest font-mono-hud uppercase text-white focus:ring-2 focus:ring-indigo-500 outline-none">
           <button id="btn-join-flow" class="btn-secondary w-full py-3.5 rounded-xl font-semibold text-white flex items-center justify-center gap-2">
             <span>🔑</span> Tham Gia Luồng
@@ -85,7 +79,7 @@
     <!-- VIEW 2: ROLE SELECTION -->
     <div id="role-view" class="view w-full max-w-md">
       <div class="text-center mb-6">
-        <p class="text-gray-400 text-xs">Passcode Luồng (Đã mã hóa E2EE)</p>
+        <p class="text-gray-400 text-xs">Passcode của phòng</p>
         <div class="font-mono-hud text-3xl font-bold tracking-[0.3em] text-indigo-300 mt-1" id="role-passcode-display">------</div>
       </div>
 
@@ -112,55 +106,47 @@
       </button>
     </div>
 
-    <!-- VIEW 3 & 4: WORKSPACE WRAPPER (2/3 MAIN + 1/3 CHAT) -->
+    <!-- VIEW 3 & 4: WORKSPACE -->
     <div id="workspace-container" class="hidden w-full max-w-7xl flex-col lg:flex-row gap-5 items-start justify-center">
 
-      <!-- LEFT: MAIN PANEL -->
       <div class="w-full lg:flex-1 space-y-4">
 
         <!-- TRANSMITTER VIEW -->
         <div id="transmitter-view" class="view">
           <div class="flex items-center justify-between mb-3">
             <div>
-              <h2 class="font-display text-lg font-bold text-indigo-300 flex items-center gap-2">📡 TRANSMITTER CONSOLE</h2>
-              <span id="tx-p2p-status" class="text-[11px] font-mono-hud text-amber-400">Đang khởi tạo P2P...</span>
+              <h2 class="font-display text-lg font-bold text-indigo-300 flex items-center gap-2">📡 TRANSMITTER</h2>
+              <span id="tx-p2p-status" class="text-[11px] font-mono-hud text-amber-400">Đang khởi tạo máy chủ báo hiệu...</span>
             </div>
-            <div class="flex items-center gap-2">
-              <span class="font-mono-hud text-indigo-300 font-bold text-xs bg-indigo-900/40 px-2.5 py-1 rounded border border-indigo-500/30" id="tx-passcode-display">------</span>
-            </div>
+            <span class="font-mono-hud text-indigo-300 font-bold text-xs bg-indigo-900/40 px-2.5 py-1 rounded border border-indigo-500/30" id="tx-passcode-display">------</span>
           </div>
 
-          <!-- KHUNG VIDEO 2 CHIỀU CỦA TRANSMITTER -->
-          <div class="relative w-full h-72 md:h-84 bg-black rounded-2xl overflow-hidden border border-gray-700 shadow-2xl mb-4 flex items-center justify-center">
-            <!-- Video lớn: Nhìn thấy Receiver -->
+          <!-- Video Monitor của Transmitter -->
+          <div class="relative w-full h-72 md:h-80 bg-black rounded-2xl overflow-hidden border border-gray-700 shadow-2xl mb-4 flex items-center justify-center">
             <video id="tx-remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
             
-            <div id="tx-no-video" class="absolute text-center text-gray-500 text-xs font-mono-hud">
-              📷 Đang chờ luồng Video Call từ Receiver...
+            <div id="tx-no-video" class="absolute text-center text-gray-500 text-xs font-mono-hud p-4">
+              📷 Chờ Receiver kết nối để nhận Video...
             </div>
             
-            <!-- Video nhỏ ở góc (PIP): Camera của chính Transmitter -->
-            <div class="absolute top-3 right-3 w-28 h-20 md:w-36 md:h-24 bg-gray-900 rounded-xl overflow-hidden border-2 border-indigo-500/60 shadow-xl z-20">
+            <!-- PIP Video Transmitter -->
+            <div class="absolute top-3 right-3 w-28 h-20 md:w-36 md:h-24 bg-gray-900 rounded-xl overflow-hidden border border-indigo-500/60 shadow-xl z-20">
               <video id="tx-local-video" autoplay playsinline muted class="w-full h-full object-cover"></video>
-              <span class="absolute bottom-1 left-1 text-[8px] bg-black/70 px-1 rounded text-gray-300 font-mono-hud">BẠN (TX)</span>
+              <span class="absolute bottom-1 left-1 text-[8px] bg-black/70 px-1 rounded text-gray-300 font-mono-hud">BẠN</span>
             </div>
 
-            <!-- THANH ĐIỀU KHIỂN CAM / MIC CHO TRANSMITTER -->
+            <!-- Thanh điều khiển Transmitter -->
             <div class="absolute bottom-3 z-20 flex items-center gap-2 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-xl border border-gray-700 text-xs font-mono-hud">
-              <button id="btn-tx-toggle-cam" class="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-green-400 border border-gray-600 flex items-center gap-1">
-                📹 <span id="tx-cam-status">Cam: BẬT</span>
-              </button>
-              <button id="btn-tx-toggle-mic" class="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-green-400 border border-gray-600 flex items-center gap-1">
-                🎤 <span id="tx-mic-status">Mic: BẬT</span>
-              </button>
+              <button id="btn-tx-toggle-cam" class="px-2.5 py-1 rounded bg-gray-800 text-green-400 border border-gray-600">📹 Cam: BẬT</button>
+              <button id="btn-tx-toggle-mic" class="px-2.5 py-1 rounded bg-gray-800 text-green-400 border border-gray-600">🎤 Mic: BẬT</button>
             </div>
           </div>
 
           <!-- Bảng phát lệnh -->
           <div class="glass-card rounded-2xl p-5 space-y-4">
             <div>
-              <label class="text-xs text-gray-400 block mb-1">Nội dung lệnh phát đi</label>
-              <input id="tx-cmd-text" type="text" placeholder="Nhập lệnh (VD: Tăng tốc độ, Quay đầu)..."
+              <label class="text-xs text-gray-400 block mb-1">Nội dung lệnh</label>
+              <input id="tx-cmd-text" type="text" placeholder="Nhập lệnh phát đi..."
                 class="w-full bg-black/40 border border-gray-700 rounded-xl px-4 py-2.5 text-white focus:ring-2 focus:ring-indigo-500 outline-none">
             </div>
 
@@ -181,7 +167,7 @@
           </div>
         </div>
 
-        <!-- RECEIVER VIEW (AR HUD + VIDEO GÓC NHÌN NGƯỜI NHẬN) -->
+        <!-- RECEIVER VIEW (AR HUD + ĐỔI CAMERA) -->
         <div id="receiver-view" class="view">
           <div class="flex items-center justify-between mb-3">
             <div>
@@ -194,30 +180,27 @@
             </div>
           </div>
 
-          <div class="hud-container rounded-2xl min-h-[480px] flex flex-col items-center justify-center relative p-6">
-            <!-- Camera của Receiver chiếu toàn màn hình -->
+          <div class="hud-container rounded-2xl min-h-[460px] flex flex-col items-center justify-center relative p-6">
             <video id="rx-local-video" autoplay playsinline muted class="absolute inset-0 w-full h-full object-cover z-0"></video>
             <div class="absolute inset-0 bg-black/30 z-[1]"></div>
             
-            <!-- Video nhỏ ở góc: Thấy mặt người phát lệnh (Transmitter) -->
-            <div class="absolute top-4 right-4 w-28 h-20 md:w-36 md:h-24 bg-gray-900 rounded-xl overflow-hidden border-2 border-green-500/60 shadow-xl z-20">
+            <!-- PIP Video Transmitter -->
+            <div class="absolute top-4 right-4 w-28 h-20 md:w-36 md:h-24 bg-gray-900 rounded-xl overflow-hidden border border-green-500/60 shadow-xl z-20">
               <video id="rx-remote-video" autoplay playsinline class="w-full h-full object-cover"></video>
               <span class="absolute bottom-1 left-1 text-[8px] bg-black/70 px-1 rounded text-cyan-300 font-mono-hud">TRANSMITTER</span>
             </div>
 
-            <!-- THANH ĐIỀU KHIỂN CAM / MIC CHO RECEIVER -->
+            <!-- THANH ĐIỀU KHIỂN RECEIVER CÓ NÚT ĐỔI CAM TRƯỚC/SAU -->
             <div class="absolute bottom-4 z-20 flex items-center gap-2 bg-black/75 backdrop-blur-md px-3 py-1.5 rounded-xl border border-gray-700 text-xs font-mono-hud">
-              <button id="btn-rx-toggle-cam" class="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-green-400 border border-gray-600 flex items-center gap-1">
-                📹 <span id="rx-cam-status">Cam: BẬT</span>
+              <button id="btn-rx-switch-cam" class="px-2.5 py-1 rounded bg-indigo-900/80 hover:bg-indigo-800 text-cyan-300 border border-indigo-500 flex items-center gap-1 font-bold">
+                🔄 Đổi Cam (Trước/Sau)
               </button>
-              <button id="btn-rx-toggle-mic" class="px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-green-400 border border-gray-600 flex items-center gap-1">
-                🎤 <span id="rx-mic-status">Mic: BẬT</span>
-              </button>
+              <button id="btn-rx-toggle-cam" class="px-2 py-1 rounded bg-gray-800 text-green-400 border border-gray-600">📹 Cam: BẬT</button>
+              <button id="btn-rx-toggle-mic" class="px-2 py-1 rounded bg-gray-800 text-green-400 border border-gray-600">🎤 Mic: BẬT</button>
             </div>
 
             <div class="hud-corner tl"></div><div class="hud-corner tr"></div><div class="hud-corner bl"></div><div class="hud-corner br"></div>
 
-            <!-- Trạng thái HUD -->
             <div id="rx-hud-idle" class="relative z-10 text-center">
               <p class="text-5xl opacity-40 mb-3">📡</p>
               <p class="font-mono-hud text-xl glow-c">CHỜ LỆNH TỪ TRANSMITTER...</p>
@@ -236,7 +219,7 @@
               <div id="rx-exec-cmd" class="font-mono-hud text-4xl font-bold glow-g break-words">--</div>
               <div id="rx-exec-cnt" class="font-mono-hud text-6xl font-bold glow-c my-2">00:00</div>
               <button id="btn-rx-swap" class="bg-pink-600 hover:bg-pink-500 text-white font-bold px-6 py-2.5 rounded-xl border border-pink-400 font-mono-hud text-xs shadow-lg">
-                🔀 YÊU CẦU HOÁN ĐỔI (SWAP)
+                🔀 HOÁN ĐỔI (SWAP)
               </button>
             </div>
           </div>
@@ -244,14 +227,14 @@
 
       </div>
 
-      <!-- RIGHT: KÊNH CHAT P2P -->
+      <!-- RIGHT: CHAT P2P -->
       <div id="chat-sidebar" class="w-full lg:w-80 xl:w-96 flex flex-col glass-card bg-[#0b101d] rounded-2xl border border-gray-700/60 h-[560px]">
         <div class="p-3.5 border-b border-gray-800 flex items-center justify-between">
           <div class="flex items-center gap-2">
             <span>💬</span>
-            <span class="font-semibold text-sm">Trò Chuyện Trực Tiếp</span>
+            <span class="font-semibold text-sm">Trò Chuyện P2P</span>
           </div>
-          <span class="text-[9px] text-green-400 font-mono-hud bg-green-950/60 px-2 py-0.5 rounded border border-green-500/30">E2EE P2P</span>
+          <span class="text-[9px] text-green-400 font-mono-hud bg-green-950/60 px-2 py-0.5 rounded border border-green-500/30">MÃ HÓA E2EE</span>
         </div>
 
         <div id="chat-messages" class="flex-1 overflow-y-auto p-4 space-y-2 text-xs">
@@ -270,16 +253,44 @@
   </div>
 
   <script>
+    // CỤM STUN & TURN SERVER QUỐC TẾ (XUYÊN TƯỜNG LỬA 4G VIETTEL/VINA/MOBI)
+    var PEER_CONFIG = {
+      config: {
+        iceServers: [
+          { urls: 'stun:stun.l.google.com:19302' },
+          { urls: 'stun:openrelay.metered.ca:80' },
+          {
+            urls: 'turn:openrelay.metered.ca:80',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          },
+          {
+            urls: 'turn:openrelay.metered.ca:443?transport=tcp',
+            username: 'openrelayproject',
+            credential: 'openrelayproject'
+          }
+        ]
+      }
+    };
+
     var App = {
       passcode: null,
       role: null,
       peer: null,
       conn: null,
+      activeCall: null,
       localStream: null,
+      facingMode: 'environment', // Mặc định camera sau cho Receiver
       isCamOn: true,
       isMicOn: true,
       currentCmd: null,
-      timer: null
+      timer: null,
+      retryInterval: null
     };
 
     function $(id) { return document.getElementById(id); }
@@ -296,18 +307,17 @@
 
     // 1. TẠO / THAM GIA
     $('btn-create-flow').addEventListener('click', function() {
-      // Tạo Passcode 6 ký tự bảo mật
-      App.passcode = Math.random().toString(36).substring(2, 8).toUpperCase();
-      $('role-passcode-display').textContent = App.passcode;
+      App.passcode = Math.random().toString(36).substring(2, 8).toLowerCase();
+      $('role-passcode-display').textContent = App.passcode.toUpperCase();
       $('lobby-view').classList.remove('active');
       $('role-view').classList.add('active');
     });
 
     $('btn-join-flow').addEventListener('click', function() {
-      var code = $('input-passcode').value.trim().toUpperCase();
-      if (code.length < 4) return showToast('Vui lòng nhập đủ Passcode');
+      var code = $('input-passcode').value.trim().toLowerCase();
+      if (!code) return showToast('Vui lòng nhập Passcode');
       App.passcode = code;
-      $('role-passcode-display').textContent = App.passcode;
+      $('role-passcode-display').textContent = App.passcode.toUpperCase();
       $('lobby-view').classList.remove('active');
       $('role-view').classList.add('active');
     });
@@ -329,34 +339,33 @@
       $('workspace-container').classList.remove('hidden');
       $('workspace-container').classList.add('flex');
       $('transmitter-view').classList.add('active');
-      $('tx-passcode-display').textContent = App.passcode;
+      $('tx-passcode-display').textContent = App.passcode.toUpperCase();
 
-      // Mở Camera & Mic của Transmitter để gọi 2 chiều
       navigator.mediaDevices.getUserMedia({ video: true, audio: true })
         .then(function(stream) {
           App.localStream = stream;
           $('tx-local-video').srcObject = stream;
           startPeerTransmitter();
         })
-        .catch(function(err) {
-          console.warn('Không mở được camera Transmitter, thử chỉ mở Mic:', err);
+        .catch(function() {
           navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
             App.localStream = stream;
             startPeerTransmitter();
           }).catch(function() {
-            startPeerTransmitter(); // Vẫn chạy nếu không có webcam
+            startPeerTransmitter();
           });
         });
     }
 
     function startPeerTransmitter() {
-      App.peer = new Peer('cflow-' + App.passcode + '-tx');
+      var peerId = 'cflow-' + App.passcode + '-tx';
+      App.peer = new Peer(peerId, PEER_CONFIG);
 
       App.peer.on('open', function() {
-        $('tx-p2p-status').textContent = '🟡 Chờ Receiver tham gia...';
+        $('tx-p2p-status').textContent = '🟡 Đang đợi Receiver tham gia...';
       });
 
-      // Nhận kết nối dữ liệu từ Receiver
+      // Nhận kết nối Data
       App.peer.on('connection', function(conn) {
         App.conn = conn;
         $('tx-p2p-status').textContent = '🟢 Receiver đã kết nối P2P!';
@@ -364,109 +373,172 @@
         setupDataHandlers();
       });
 
-      // Nhận cuộc gọi Video từ Receiver và trả lời bằng luồng của Transmitter
+      // Nhận cuộc gọi Video
       App.peer.on('call', function(call) {
-        call.answer(App.localStream);
+        App.activeCall = call;
+        call.answer(App.localStream || undefined);
         call.on('stream', function(remoteStream) {
-          $('tx-remote-video').srcObject = remoteStream;
+          var v = $('tx-remote-video');
+          v.srcObject = remoteStream;
+          v.play().catch(function(){});
           $('tx-no-video').classList.add('hidden');
         });
       });
 
       App.peer.on('error', function(err) {
+        $('tx-p2p-status').textContent = '⚠️ Trạng thái: ' + err.type;
         if (err.type === 'unavailable-id') {
-          showToast('Passcode này đang có phòng hoạt động!');
+          showToast('Phòng này đang bận. Hãy tạo Passcode mới!');
         }
       });
     }
 
-    // 4. KHỞI TẠO RECEIVER
+    // 4. KHỞI TẠO RECEIVER (VỚI CƠ CHẾ AUTO-RETRY KẾT NỐI)
     function initReceiver() {
       $('role-view').classList.remove('active');
       $('workspace-container').classList.remove('hidden');
       $('workspace-container').classList.add('flex');
       $('receiver-view').classList.add('active');
-      $('rx-passcode-display').textContent = App.passcode;
+      $('rx-passcode-display').textContent = App.passcode.toUpperCase();
 
-      // Mở Camera sau của Receiver
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } }, audio: true })
+      startReceiverCameraAndConnect();
+    }
+
+    function startReceiverCameraAndConnect() {
+      var constraints = {
+        video: { facingMode: { ideal: App.facingMode } },
+        audio: true
+      };
+
+      navigator.mediaDevices.getUserMedia(constraints)
         .catch(function() { return navigator.mediaDevices.getUserMedia({ video: true, audio: true }); })
         .then(function(stream) {
           App.localStream = stream;
-          $('rx-local-video').srcObject = stream;
+          var localVid = $('rx-local-video');
+          localVid.srcObject = stream;
+          localVid.play().catch(function(){});
 
-          App.peer = new Peer('cflow-' + App.passcode + '-rx');
+          var rxPeerId = 'cflow-' + App.passcode + '-rx-' + Math.floor(Math.random() * 1000);
+          App.peer = new Peer(rxPeerId, PEER_CONFIG);
 
           App.peer.on('open', function() {
-            // Kết nối Data Channel
-            App.conn = App.peer.connect('cflow-' + App.passcode + '-tx');
-            setupDataHandlers();
+            tryConnectToTransmitter();
+          });
 
-            // Gọi Video sang Transmitter
-            var call = App.peer.call('cflow-' + App.passcode + '-tx', stream);
-            call.on('stream', function(remoteStream) {
-              $('rx-remote-video').srcObject = remoteStream; // Nhận hình Transmitter
-            });
-
-            $('rx-p2p-status').textContent = '🟢 Đã kết nối với Transmitter!';
-            $('rx-p2p-status').className = 'text-[11px] font-mono-hud text-green-400';
+          App.peer.on('error', function(err) {
+            console.warn('Lỗi Peer Receiver:', err);
           });
         })
         .catch(function(err) {
-          alert('Lỗi truy cập Camera/Micro: ' + err.message);
+          alert('Không thể mở Camera/Micro: ' + err.message);
         });
     }
 
-    // 5. ĐIỀU KHIỂN BẬT / TẮT CAM & MIC
-    function toggleCamTrack(btnId, txtId) {
-      if (!App.localStream) return showToast('Không tìm thấy Camera');
+    // Cơ chế tự động thử kết nối lại đến khi Transmitter online
+    function tryConnectToTransmitter() {
+      var targetTxId = 'cflow-' + App.passcode + '-tx';
+      var retryCount = 0;
+
+      if (App.retryInterval) clearInterval(App.retryInterval);
+
+      App.retryInterval = setInterval(function() {
+        if (App.conn && App.conn.open) {
+          clearInterval(App.retryInterval);
+          return;
+        }
+
+        retryCount++;
+        $('rx-p2p-status').textContent = '🟡 Đang tìm Transmitter (lần ' + retryCount + ')...';
+
+        // Thử kết nối data
+        var conn = App.peer.connect(targetTxId);
+        
+        conn.on('open', function() {
+          clearInterval(App.retryInterval);
+          App.conn = conn;
+          setupDataHandlers();
+          $('rx-p2p-status').textContent = '🟢 Đã kết nối với Transmitter!';
+          $('rx-p2p-status').className = 'text-[11px] font-mono-hud text-green-400';
+          showToast('Đã kết nối thành công P2P!');
+
+          // Thực hiện cuộc gọi video sau khi data channel đã thông
+          var call = App.peer.call(targetTxId, App.localStream);
+          App.activeCall = call;
+          call.on('stream', function(remoteStream) {
+            var rv = $('rx-remote-video');
+            rv.srcObject = remoteStream;
+            rv.play().catch(function(){});
+          });
+        });
+
+      }, 2000);
+    }
+
+    // 5. TÍNH NĂNG CHUYỂN ĐỔI CAMERA TRƯỚC / SAU (SWITCH CAMERA)
+    $('btn-rx-switch-cam').addEventListener('click', function() {
+      App.facingMode = (App.facingMode === 'environment') ? 'user' : 'environment';
+      showToast('Đang chuyển camera sang: ' + (App.facingMode === 'environment' ? 'Camera Sau' : 'Camera Trước'));
+
+      if (App.localStream) {
+        App.localStream.getVideoTracks().forEach(function(track) { track.stop(); });
+      }
+
+      var newConstraints = {
+        video: { facingMode: { ideal: App.facingMode } },
+        audio: true
+      };
+
+      navigator.mediaDevices.getUserMedia(newConstraints).then(function(newStream) {
+        // Giữ lại audio track cũ nếu có
+        var newVideoTrack = newStream.getVideoTracks()[0];
+        
+        // Cập nhật lên thẻ video của mình
+        App.localStream = newStream;
+        $('rx-local-video').srcObject = newStream;
+
+        // Thay thế luồng phát gửi sang Transmitter mà KHÔNG cần ngắt cuộc gọi (replaceTrack)
+        if (App.activeCall && App.activeCall.peerConnection) {
+          var senders = App.activeCall.peerConnection.getSenders();
+          var videoSender = senders.find(function(s) { return s.track && s.track.kind === 'video'; });
+          if (videoSender) {
+            videoSender.replaceTrack(newVideoTrack);
+          }
+        }
+        showToast('Đã đổi Camera thành công!');
+      }).catch(function(err) {
+        showToast('Lỗi đổi camera: ' + err.message);
+      });
+    });
+
+    // 6. BẬT / TẮT CAM VÀ MIC
+    function toggleCam(btnId) {
+      if (!App.localStream) return;
       var track = App.localStream.getVideoTracks()[0];
       if (track) {
         track.enabled = !track.enabled;
         App.isCamOn = track.enabled;
-        var btn = $(btnId);
-        var txt = $(txtId);
-        if (App.isCamOn) {
-          btn.className = 'px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-green-400 border border-gray-600 flex items-center gap-1';
-          txt.textContent = 'Cam: BẬT';
-          showToast('Camera đã bật');
-        } else {
-          btn.className = 'px-2.5 py-1 rounded bg-red-950/80 hover:bg-red-900 text-red-400 border border-red-600 flex items-center gap-1';
-          txt.textContent = 'Cam: TẮT';
-          showToast('Camera đã tắt');
-        }
+        $(btnId).textContent = App.isCamOn ? '📹 Cam: BẬT' : '📹 Cam: TẮT';
+        $(btnId).className = App.isCamOn ? 'px-2.5 py-1 rounded bg-gray-800 text-green-400 border border-gray-600' : 'px-2.5 py-1 rounded bg-red-950 text-red-400 border border-red-600';
       }
     }
 
-    function toggleMicTrack(btnId, txtId) {
-      if (!App.localStream) return showToast('Không tìm thấy Micro');
+    function toggleMic(btnId) {
+      if (!App.localStream) return;
       var track = App.localStream.getAudioTracks()[0];
       if (track) {
         track.enabled = !track.enabled;
         App.isMicOn = track.enabled;
-        var btn = $(btnId);
-        var txt = $(txtId);
-        if (App.isMicOn) {
-          btn.className = 'px-2.5 py-1 rounded bg-gray-800 hover:bg-gray-700 text-green-400 border border-gray-600 flex items-center gap-1';
-          txt.textContent = 'Mic: BẬT';
-          showToast('Micro đã bật');
-        } else {
-          btn.className = 'px-2.5 py-1 rounded bg-red-950/80 hover:bg-red-900 text-red-400 border border-red-600 flex items-center gap-1';
-          txt.textContent = 'Mic: TẮT';
-          showToast('Micro đã tắt tiếng (Muted)');
-        }
+        $(btnId).textContent = App.isMicOn ? '🎤 Mic: BẬT' : '🎤 Mic: TẮT';
+        $(btnId).className = App.isMicOn ? 'px-2.5 py-1 rounded bg-gray-800 text-green-400 border border-gray-600' : 'px-2.5 py-1 rounded bg-red-950 text-red-400 border border-red-600';
       }
     }
 
-    // Gán sự kiện cho nút Cam/Mic Transmitter
-    $('btn-tx-toggle-cam').addEventListener('click', function() { toggleCamTrack('btn-tx-toggle-cam', 'tx-cam-status'); });
-    $('btn-tx-toggle-mic').addEventListener('click', function() { toggleMicTrack('btn-tx-toggle-mic', 'tx-mic-status'); });
+    $('btn-tx-toggle-cam').addEventListener('click', function() { toggleCam('btn-tx-toggle-cam'); });
+    $('btn-tx-toggle-mic').addEventListener('click', function() { toggleMic('btn-tx-toggle-mic'); });
+    $('btn-rx-toggle-cam').addEventListener('click', function() { toggleCam('btn-rx-toggle-cam'); });
+    $('btn-rx-toggle-mic').addEventListener('click', function() { toggleMic('btn-rx-toggle-mic'); });
 
-    // Gán sự kiện cho nút Cam/Mic Receiver
-    $('btn-rx-toggle-cam').addEventListener('click', function() { toggleCamTrack('btn-rx-toggle-cam', 'rx-cam-status'); });
-    $('btn-rx-toggle-mic').addEventListener('click', function() { toggleMicTrack('btn-rx-toggle-mic', 'rx-mic-status'); });
-
-    // 6. XỬ LÝ LỆNH & CHAT
+    // 7. LỆNH & CHAT
     function setupDataHandlers() {
       App.conn.on('data', function(data) {
         if (data.type === 'COMMAND') handleIncomingCommand(data);
@@ -481,7 +553,7 @@
       var duration = parseInt($('tx-duration').value, 10) || 30;
 
       if (!text) return showToast('Vui lòng nhập lệnh!');
-      if (!App.conn) return showToast('Chưa có kết nối P2P!');
+      if (!App.conn || !App.conn.open) return showToast('Chưa có kết nối tới Receiver!');
 
       App.conn.send({
         type: 'COMMAND',
@@ -522,7 +594,7 @@
     }
 
     $('btn-rx-swap').addEventListener('click', function() {
-      if (App.conn) {
+      if (App.conn && App.conn.open) {
         App.conn.send({ type: 'SWAP' });
         showToast('Đã gửi yêu cầu đổi lệnh!');
       }
@@ -535,7 +607,7 @@
       if (!txt) return;
 
       appendChatMessage(App.role, txt);
-      if (App.conn) {
+      if (App.conn && App.conn.open) {
         App.conn.send({ type: 'CHAT', sender: App.role, text: txt });
       }
       input.value = '';
