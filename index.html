@@ -119,6 +119,7 @@
               <span id="tx-p2p-status" class="text-[11px] font-mono-hud text-amber-400">Đang khởi tạo máy chủ báo hiệu...</span>
             </div>
             <div class="flex items-center gap-2">
+              <button id="btn-tx-manual-reconnect" class="bg-indigo-600/40 hover:bg-indigo-600 text-indigo-300 text-xs px-2 py-1 rounded font-mono-hud border border-indigo-500/40">🔄 Kết nối lại</button>
               <span class="font-mono-hud text-indigo-300 font-bold text-xs bg-indigo-900/40 px-2.5 py-1 rounded border border-indigo-500/30" id="tx-passcode-display">------</span>
             </div>
           </div>
@@ -259,6 +260,8 @@
       <div>MÁY CHỦ BÁO HIỆU: <span id="debug-server-status" class="text-amber-400">Đang kết nối...</span></div>
       <div>P2P DATA: <span id="debug-p2p-status" class="text-red-400">Chưa nối</span></div>
       <div>ICE (MẠNG): <span id="debug-ice-status" class="text-red-400">Chưa nối</span></div>
+      <div>ĐƯỜNG TRUYỀN: <span id="debug-route-type" class="text-gray-400">--</span></div>
+      <div>CHẤT LƯỢNG: <span id="debug-quality" class="text-gray-400">--</span></div>
     </div>
 
   </div>
@@ -285,7 +288,9 @@
           { urls: 'stun:stun.l.google.com:19302' },
           { urls: 'stun:stun1.l.google.com:19302' },
           { urls: 'stun:stun.cloudflare.com:3478' },
-          // TURN (OpenRelay - free, dùng để test / traffic thấp)
+          // TURN (OpenRelay - free, dùng để test / traffic thấp).
+          // UDP thử trước (nhanh hơn), TCP là phương án dự phòng
+          // cho mạng chặn UDP (một số wifi công ty/trường học).
           {
             urls: 'turn:openrelay.metered.ca:80',
             username: 'openrelayproject',
@@ -301,9 +306,39 @@
             username: 'openrelayproject',
             credential: 'openrelayproject'
           }
-        ]
+        ],
+        // 'all' = cho phép ICE dùng cả đường trực tiếp lẫn relay,
+        // tự chọn đường tốt nhất. Đây là default đúng cho hầu hết
+        // trường hợp (không ép relay để khỏi tốn băng thông TURN
+        // khi không cần thiết).
+        iceTransportPolicy: 'all',
+        // Giảm số lượng ICE candidate cần thu thập ban đầu để
+        // handshake nhanh hơn trên mạng di động độ trễ cao.
+        iceCandidatePoolSize: 4
       }
     };
+
+    // Ràng buộc video theo thiết bị: điện thoại nên xin độ phân
+    // giải thấp hơn + framerate thấp hơn để: (1) tăng khả năng
+    // camera được cấp quyền thành công trên các máy yếu, (2) đỡ
+    // tốn băng thông upload di động -> mượt hơn khi mạng yếu.
+    var IS_MOBILE = /Android|iPhone|iPad|iPod/i.test(navigator.userAgent);
+
+    function buildVideoConstraints(facingMode) {
+      if (IS_MOBILE) {
+        return {
+          facingMode: { ideal: facingMode },
+          width: { ideal: 640, max: 960 },
+          height: { ideal: 480, max: 720 },
+          frameRate: { ideal: 20, max: 24 }
+        };
+      }
+      return {
+        width: { ideal: 1280 },
+        height: { ideal: 720 },
+        frameRate: { ideal: 24 }
+      };
+    }
 
     var App = {
       passcode: null,
@@ -315,9 +350,11 @@
       facingMode: 'environment',
       isCamOn: true,
       isMicOn: true,
+      hasVideoTrack: false,
       currentCmd: null,
       timer: null,
-      reconnectAttempts: 0
+      reconnectAttempts: 0,
+      statsInterval: null
     };
 
     function $(id) { return document.getElementById(id); }
@@ -337,11 +374,85 @@
       if (el) { el.textContent = text; el.className = cls; }
     }
 
+    function setRouteType(text, cls) {
+      var el = $('debug-route-type');
+      if (el) { el.textContent = text; el.className = cls; }
+    }
+
+    function setQuality(text, cls) {
+      var el = $('debug-quality');
+      if (el) { el.textContent = text; el.className = cls; }
+    }
+
+    // ============================================================
+    // XIN QUYỀN CAMERA/MIC - CÓ BÁO LỖI RÕ RÀNG
+    // ------------------------------------------------------------
+    // Trước đây: nếu getUserMedia({video,audio}) lỗi vì BẤT KỲ lý
+    // do gì (kể cả người dùng chỉ đơn giản bấm "Từ chối"), code cũ
+    // âm thầm rơi xuống audio-only mà không cho biết vì sao. Người
+    // dùng thấy "mất camera" mà không rõ do trình duyệt chặn hay
+    // do thiết bị không có cam.
+    //
+    // Giờ: thử xin video+audio với constraints phù hợp thiết bị
+    // trước; nếu lỗi, phân loại lỗi cụ thể (bị từ chối quyền /
+    // không có thiết bị / đang bị app khác chiếm / không đạt được
+    // constraints) rồi mới thử lại với constraints lỏng hơn, và
+    // luôn thông báo rõ cho người dùng lý do thật.
+    // ============================================================
+    function acquireMedia(facingMode) {
+      var primary = { video: buildVideoConstraints(facingMode), audio: true };
+
+      return navigator.mediaDevices.getUserMedia(primary)
+        .then(function(stream) {
+          return { stream: stream, hasVideo: true, hasAudio: true };
+        })
+        .catch(function(err) {
+          console.warn('getUserMedia (constraints ưu tiên) lỗi:', err.name, err.message);
+
+          if (err.name === 'OverconstrainedError') {
+            // Constraints quá chặt cho thiết bị này -> thử lại với
+            // yêu cầu video tối giản (chỉ facingMode, không ép độ
+            // phân giải/framerate).
+            showToast('Camera không hỗ trợ độ phân giải yêu cầu, đang thử cấu hình thấp hơn...');
+            return navigator.mediaDevices.getUserMedia({ video: { facingMode: facingMode }, audio: true })
+              .then(function(stream) { return { stream: stream, hasVideo: true, hasAudio: true }; })
+              .catch(function(err2) { return handleMediaFallback(err2); });
+          }
+
+          return handleMediaFallback(err);
+        });
+    }
+
+    function handleMediaFallback(err) {
+      var reasons = {
+        'NotAllowedError': 'Bạn đã từ chối quyền camera/mic, hoặc trình duyệt chặn quyền trên trang không phải HTTPS.',
+        'NotFoundError': 'Không tìm thấy camera/mic trên thiết bị này.',
+        'NotReadableError': 'Camera đang bị ứng dụng khác chiếm dụng (đóng app camera/video call khác rồi thử lại).',
+        'SecurityError': 'Trang chưa chạy trên HTTPS nên trình duyệt chặn camera. Hãy mở qua đường link https://',
+        'AbortError': 'Thiết bị không phản hồi khi mở camera (thử tải lại trang).'
+      };
+      var reason = reasons[err.name] || (err.message || 'Lỗi không xác định');
+      showToast('⚠ Không thể mở CAMERA: ' + reason);
+
+      // Thử chỉ audio - nhưng báo rõ ràng cho người dùng biết đây
+      // là chế độ dự phòng, không phải hành vi mặc định.
+      return navigator.mediaDevices.getUserMedia({ audio: true })
+        .then(function(stream) {
+          showToast('Đang dùng chế độ CHỈ MIC (không có video) do lỗi camera ở trên.');
+          return { stream: stream, hasVideo: false, hasAudio: true };
+        })
+        .catch(function(err3) {
+          showToast('Không thể mở cả camera lẫn mic: ' + (err3.message || err3.name));
+          return { stream: null, hasVideo: false, hasAudio: false };
+        });
+    }
+
     // Theo dõi trạng thái ICE thật sự của kết nối video (nguồn lỗi
     // hay gặp nhất) để người dùng biết chính xác đang tắc ở đâu.
     function watchIceConnection(call, label) {
       if (!call || !call.peerConnection) return;
       var pc = call.peerConnection;
+
       pc.oniceconnectionstatechange = function() {
         var state = pc.iceConnectionState;
         console.log('[ICE ' + label + ']', state);
@@ -349,15 +460,74 @@
           setIceStatus('Đang dò đường mạng...', 'text-amber-400');
         } else if (state === 'connected' || state === 'completed') {
           setIceStatus('ĐÃ KẾT NỐI (' + state + ')', 'text-green-400 font-bold');
+          startQualityMonitor(pc);
         } else if (state === 'disconnected') {
           setIceStatus('MẤT KẾT NỐI TẠM THỜI...', 'text-amber-400');
         } else if (state === 'failed') {
           setIceStatus('THẤT BẠI - cần TURN server', 'text-red-400 font-bold');
           showToast('Kết nối mạng thất bại. Có thể do tường lửa/NAT nghiêm ngặt. Đang thử lại...');
+          stopQualityMonitor();
         } else if (state === 'closed') {
           setIceStatus('Đã đóng', 'text-gray-400');
+          stopQualityMonitor();
         }
       };
+    }
+
+    // ============================================================
+    // GIÁM SÁT CHẤT LƯỢNG ĐƯỜNG TRUYỀN (RTCStats)
+    // ------------------------------------------------------------
+    // Cho biết: (1) đang đi TRỰC TIẾP (P2P thật, độ trễ thấp) hay
+    // đang RELAY qua TURN server (độ trễ cao hơn, do NAT nghiêm
+    // ngặt) - việc này giải thích vì sao có lúc "mượt" có lúc
+    // không dù cùng 1 config; (2) round-trip time và tỉ lệ mất gói
+    // theo thời gian thực, để biết "giật/lag" là do mạng yếu thật
+    // sự hay do lỗi code.
+    // ============================================================
+    function startQualityMonitor(pc) {
+      stopQualityMonitor();
+      App.statsInterval = setInterval(function() {
+        pc.getStats(null).then(function(stats) {
+          var rtt = null, packetsLost = 0, packetsReceived = 0, routeType = null;
+
+          stats.forEach(function(report) {
+            if (report.type === 'candidate-pair' && report.state === 'succeeded' && report.nominated) {
+              if (typeof report.currentRoundTripTime === 'number') {
+                rtt = report.currentRoundTripTime * 1000; // ms
+              }
+              // Xác định loại đường truyền qua candidate type
+              stats.forEach(function(c) {
+                if (c.id === report.localCandidateId || c.id === report.remoteCandidateId) {
+                  if (c.candidateType === 'relay') routeType = 'RELAY (qua TURN)';
+                }
+              });
+            }
+            if (report.type === 'inbound-rtp' && report.kind === 'video') {
+              if (typeof report.packetsLost === 'number') packetsLost = report.packetsLost;
+              if (typeof report.packetsReceived === 'number') packetsReceived = report.packetsReceived;
+            }
+          });
+
+          if (!routeType) routeType = 'TRỰC TIẾP (P2P)';
+          setRouteType(routeType, routeType.indexOf('RELAY') === 0 || routeType.indexOf('RELAY') > -1 ? 'text-amber-400' : 'text-green-400');
+
+          if (rtt !== null) {
+            var lossRate = packetsReceived > 0 ? (packetsLost / (packetsLost + packetsReceived) * 100) : 0;
+            var qualityLabel, qualityCls;
+            if (rtt < 150 && lossRate < 2) { qualityLabel = 'TỐT (' + Math.round(rtt) + 'ms)'; qualityCls = 'text-green-400 font-bold'; }
+            else if (rtt < 350 && lossRate < 8) { qualityLabel = 'TRUNG BÌNH (' + Math.round(rtt) + 'ms, mất ' + lossRate.toFixed(1) + '%)'; qualityCls = 'text-amber-400'; }
+            else { qualityLabel = 'YẾU (' + Math.round(rtt) + 'ms, mất ' + lossRate.toFixed(1) + '%)'; qualityCls = 'text-red-400 font-bold'; }
+            setQuality(qualityLabel, qualityCls);
+          }
+        }).catch(function() {});
+      }, 3000);
+    }
+
+    function stopQualityMonitor() {
+      if (App.statsInterval) {
+        clearInterval(App.statsInterval);
+        App.statsInterval = null;
+      }
     }
 
     // 1. TẠO / THAM GIA
@@ -397,20 +567,19 @@
       $('transmitter-view').classList.add('active');
       $('tx-passcode-display').textContent = App.passcode.toUpperCase();
 
-      navigator.mediaDevices.getUserMedia({ video: true, audio: true })
-        .then(function(stream) {
-          App.localStream = stream;
-          $('tx-local-video').srcObject = stream;
-          startPeerTransmitter();
-        })
-        .catch(function() {
-          navigator.mediaDevices.getUserMedia({ audio: true }).then(function(stream) {
-            App.localStream = stream;
-            startPeerTransmitter();
-          }).catch(function() {
-            startPeerTransmitter();
-          });
-        });
+      acquireMedia(App.facingMode).then(function(result) {
+        App.localStream = result.stream;
+        App.hasVideoTrack = result.hasVideo;
+        if (result.stream) {
+          $('tx-local-video').srcObject = result.stream;
+        }
+        if (!result.hasVideo) {
+          $('btn-tx-toggle-cam').textContent = '📹 Không có Cam';
+          $('btn-tx-toggle-cam').disabled = true;
+          $('btn-tx-toggle-cam').className = 'px-2.5 py-1 rounded bg-gray-900 text-gray-500 border border-gray-700 cursor-not-allowed';
+        }
+        startPeerTransmitter();
+      });
     }
 
     function startPeerTransmitter() {
@@ -492,50 +661,57 @@
       $('receiver-view').classList.add('active');
       $('rx-passcode-display').textContent = App.passcode.toUpperCase();
 
-      navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: App.facingMode } }, audio: true })
-        .catch(function() { return navigator.mediaDevices.getUserMedia({ video: true, audio: true }); })
-        .then(function(stream) {
-          App.localStream = stream;
-          $('rx-local-video').srcObject = stream;
+      acquireMedia(App.facingMode).then(function(result) {
+        App.localStream = result.stream;
+        App.hasVideoTrack = result.hasVideo;
+        if (!result.stream) {
+          alert('Không thể mở Camera/Micro trên thiết bị này.');
+          return;
+        }
+        $('rx-local-video').srcObject = result.stream;
+        if (!result.hasVideo) {
+          $('btn-rx-toggle-cam').textContent = '📹 Không có Cam';
+          $('btn-rx-toggle-cam').disabled = true;
+          $('btn-rx-toggle-cam').className = 'px-2 py-1 rounded bg-gray-900 text-gray-500 border border-gray-700 cursor-not-allowed';
+          $('btn-rx-switch-cam').disabled = true;
+          $('btn-rx-switch-cam').className = 'px-2.5 py-1 rounded bg-gray-900 text-gray-600 border border-gray-700 cursor-not-allowed flex items-center gap-1 font-bold';
+        }
 
-          var myId = 'room-' + App.passcode + '-rx-' + Math.floor(Math.random() * 1000);
-          $('debug-my-id').textContent = myId;
+        var myId = 'room-' + App.passcode + '-rx-' + Math.floor(Math.random() * 1000);
+        $('debug-my-id').textContent = myId;
 
-          App.peer = new Peer(myId, PEER_CONFIG);
+        App.peer = new Peer(myId, PEER_CONFIG);
 
-          App.peer.on('open', function() {
-            $('debug-server-status').textContent = 'ĐÃ SẴN SÀNG (Online)';
-            $('debug-server-status').className = 'text-green-400 font-bold';
-            connectToTransmitter();
-          });
-
-          App.peer.on('disconnected', function() {
-            $('debug-server-status').textContent = 'MẤT KẾT NỐI MÁY CHỦ - đang thử lại...';
-            $('debug-server-status').className = 'text-amber-400';
-            setTimeout(function() {
-              if (App.peer && !App.peer.destroyed) App.peer.reconnect();
-            }, 1500);
-          });
-
-          App.peer.on('error', function(err) {
-            console.error('Peer Error RX:', err);
-            $('debug-server-status').textContent = 'LỖI: ' + err.type;
-            $('debug-server-status').className = 'text-red-400';
-            if (err.type === 'peer-unavailable') {
-              // Transmitter chưa mở phòng / chưa tạo -> tự thử lại
-              $('rx-p2p-status').textContent = '🟡 Chưa tìm thấy Transmitter, đang thử lại...';
-              App.reconnectAttempts++;
-              if (App.reconnectAttempts < 20) {
-                setTimeout(connectToTransmitter, 3000);
-              } else {
-                showToast('Không tìm thấy Transmitter. Kiểm tra lại Passcode.');
-              }
-            }
-          });
-        })
-        .catch(function(err) {
-          alert('Không thể mở Camera/Micro: ' + err.message);
+        App.peer.on('open', function() {
+          $('debug-server-status').textContent = 'ĐÃ SẴN SÀNG (Online)';
+          $('debug-server-status').className = 'text-green-400 font-bold';
+          connectToTransmitter();
         });
+
+        App.peer.on('disconnected', function() {
+          $('debug-server-status').textContent = 'MẤT KẾT NỐI MÁY CHỦ - đang thử lại...';
+          $('debug-server-status').className = 'text-amber-400';
+          setTimeout(function() {
+            if (App.peer && !App.peer.destroyed) App.peer.reconnect();
+          }, 1500);
+        });
+
+        App.peer.on('error', function(err) {
+          console.error('Peer Error RX:', err);
+          $('debug-server-status').textContent = 'LỖI: ' + err.type;
+          $('debug-server-status').className = 'text-red-400';
+          if (err.type === 'peer-unavailable') {
+            // Transmitter chưa mở phòng / chưa tạo -> tự thử lại
+            $('rx-p2p-status').textContent = '🟡 Chưa tìm thấy Transmitter, đang thử lại...';
+            App.reconnectAttempts++;
+            if (App.reconnectAttempts < 20) {
+              setTimeout(connectToTransmitter, 3000);
+            } else {
+              showToast('Không tìm thấy Transmitter. Kiểm tra lại Passcode.');
+            }
+          }
+        });
+      });
     }
 
     function connectToTransmitter() {
@@ -586,7 +762,8 @@
       });
     }
 
-    // Nút thử kết nối lại thủ công
+    // Nút thử kết nối lại thủ công (RECEIVER): re-dial signaling
+    // server và/hoặc thử kết nối lại tới Transmitter.
     $('btn-rx-manual-reconnect').addEventListener('click', function() {
       showToast('Đang thử kết nối lại...');
       App.reconnectAttempts = 0;
@@ -597,8 +774,40 @@
       }
     });
 
+    // Nút thử kết nối lại thủ công (TRANSMITTER): Transmitter chỉ
+    // LẮNG NGHE (không chủ động gọi sang), nên "kết nối lại" ở
+    // đây nghĩa là: (1) nếu mất kết nối signaling server, gọi
+    // peer.reconnect(); (2) nếu signaling vẫn ổn nhưng cuộc gọi
+    // video/data với Receiver bị treo, đóng kết nối cũ để
+    // Receiver's tự động thử lại có thể bắt tay lại từ đầu.
+    $('btn-tx-manual-reconnect').addEventListener('click', function() {
+      showToast('Đang làm mới kết nối...');
+      if (App.peer && App.peer.disconnected) {
+        App.peer.reconnect();
+        return;
+      }
+      if (App.conn) {
+        try { App.conn.close(); } catch(e) {}
+      }
+      if (App.activeCall) {
+        try { App.activeCall.close(); } catch(e) {}
+      }
+      $('tx-p2p-status').textContent = '🟡 Đã làm mới - chờ Receiver kết nối lại...';
+      $('tx-p2p-status').className = 'text-[11px] font-mono-hud text-amber-400';
+      $('debug-p2p-status').textContent = 'Chưa nối';
+      $('debug-p2p-status').className = 'text-red-400';
+      $('tx-no-video').classList.remove('hidden');
+      stopQualityMonitor();
+      setRouteType('--', 'text-gray-400');
+      setQuality('--', 'text-gray-400');
+    });
+
     // 5. NÚT CHUYỂN CAMERA TRƯỚC / SAU
     $('btn-rx-switch-cam').addEventListener('click', function() {
+      if (!App.hasVideoTrack) {
+        showToast('Thiết bị này không có camera khả dụng.');
+        return;
+      }
       App.facingMode = (App.facingMode === 'environment') ? 'user' : 'environment';
       showToast('Đang chuyển camera...');
 
@@ -607,10 +816,14 @@
       }
 
       navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: App.facingMode } },
+        video: buildVideoConstraints(App.facingMode),
         audio: true
       }).then(function(newStream) {
         var newTrack = newStream.getVideoTracks()[0];
+        // Giữ track audio cũ (đang gắn với kết nối hiện tại),
+        // chỉ thay track video để không phải renegotiate audio.
+        var oldAudioTrack = App.localStream ? App.localStream.getAudioTracks()[0] : null;
+        if (oldAudioTrack) newStream.removeTrack(newStream.getAudioTracks()[0]) , newStream.addTrack(oldAudioTrack);
         App.localStream = newStream;
         $('rx-local-video').srcObject = newStream;
 
@@ -622,7 +835,7 @@
         }
         showToast('Đã đổi Camera thành công!');
       }).catch(function(err) {
-        showToast('Lỗi đổi cam: ' + err.message);
+        showToast('Lỗi đổi cam: ' + (err.message || err.name));
       });
     });
 
